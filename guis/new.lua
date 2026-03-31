@@ -8097,6 +8097,10 @@ function mainapi:UpdateGUI(hue, sat, val, default)
 	end
 end
 
+task.spawn(function()
+	repeat task.wait(); pcall(function() mainapi:UpdateGUI(); end); until mainapi.Loaded == nil
+end)
+
 mainapi:Clean(notifications.ChildRemoved:Connect(function()
 	for i, v in notifications:GetChildren() do
 		if tween.Tween then
