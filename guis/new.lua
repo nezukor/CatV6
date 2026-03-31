@@ -8098,7 +8098,7 @@ function mainapi:UpdateGUI(hue, sat, val, default)
 end
 
 task.spawn(function()
-	repeat task.wait(); pcall(function() mainapi:UpdateGUI(); end); until mainapi.Loaded == nil
+	repeat task.wait(2); pcall(function() mainapi:UpdateGUI(); end); until mainapi.Loaded == nil
 end)
 
 mainapi:Clean(notifications.ChildRemoved:Connect(function()
