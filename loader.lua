@@ -71,7 +71,7 @@ if not shared.VapeDeveloper then
 		Args.Commit = 'main'
 	end
 	
-	if not isfile('catrewrite/profiles/commit.txt') or readfile('catrewrite/profiles/commit.txt') ~= commit or commit == 'main' then
+	if not isfile('catrewrite/profiles/commit.txt') or readfile('catrewrite/profiles/commit.txt') ~= commit or commit == 'main' or readfile('catrewrite/profiles/commit.txt') == "main" then
 		wipeFolder('catrewrite')
 		wipeFolder('catrewrite/games')
 		wipeFolder('catrewrite/guis')
