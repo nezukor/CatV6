@@ -6136,7 +6136,8 @@ run(function()
 	-- Potassium's public RakNet docs only expose generic packet fields, so this
 	-- currently keys off timestamp traffic as the safest movement heuristic.
 	local movementPacketIds = {
-		[0x1B] = true
+		[0x1B] = true,
+		[0x85] = true
 	}
 
 	local function copyPacketData(packet)
@@ -6209,11 +6210,13 @@ run(function()
 
 				blinkSendHook = function(packet)
 					if not BlinkPlus.Enabled then return end
+					local isMovementPacket = movementPacketIds[packet.PacketId]
+					if not isMovementPacket then return end
 					local now = tick()
 					if now >= blinkNextCycle then
 						startBlinkCycle()
 					end
-					if blinkCycleActive() and movementPacketIds[packet.PacketId] then
+					if blinkCycleActive() then
 						table.insert(blinkQueued, {
 							Packet = copyPacketData(packet),
 							Priority = packet.Priority,
@@ -6241,7 +6244,7 @@ run(function()
 				stopBlinkHooks()
 			end
 		end,
-		Tooltip = 'A more advanced and better version of blink :3\nWARNING: extremely blatant and very ban risky.\nRequires Potassium RakNet hooks to be enabled in the internal UI.\nUses queued movement packets and flushes them after each blink window.\nIf receive hooks exist, inbound traffic is broadly blocked during the blink window.'
+		Tooltip = 'A more advanced and better version of blink :3\nWARNING: super risky for bans, this is blatant as hell.\nRequires Potassium RakNet hooks to be enabled in the internal UI.\nUses queued movement packets and flushes them after each blink window.\nIf receive hooks exist, inbound traffic is broadly blocked during the blink window.'
 	})
 	BlinkDelay = BlinkPlus:CreateSlider({
 		Name = 'Blink Delay',
