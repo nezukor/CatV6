@@ -2660,6 +2660,11 @@ mainapi:CreateCategory({
 	RiseIcon = 'b'
 })
 mainapi:CreateCategory({
+	Name = 'RakNet',
+	RealName = 'Raknet',
+	RiseIcon = 'b'
+})
+mainapi:CreateCategory({
 	Name = 'Player',
 	RealName = 'Utility',
 	RiseIcon = 'c'

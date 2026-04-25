@@ -6117,7 +6117,148 @@ run(function()
 		end
 	})
 end)
-	
+
+run(function()
+	local BlinkPlus
+	local BlinkDelay
+	local BlinkCooldown
+	local blinkSendHook
+	local blinkReceiveHook
+	local blinkQueued = {}
+	local blinkActiveUntil = 0
+	local blinkNextCycle = 0
+	local blinkFlushThread
+	local damageBlockSupported = type(raknet) == 'table' and type(raknet.add_receive_hook) == 'function' and type(raknet.remove_receive_hook) == 'function'
+	local raknetSupported = type(raknet) == 'table'
+		and type(raknet.add_send_hook) == 'function'
+		and type(raknet.remove_send_hook) == 'function'
+		and type(raknet.send) == 'function'
+	-- Potassium's public RakNet docs only expose generic packet fields, so this
+	-- currently keys off timestamp traffic as the safest movement heuristic.
+	local movementPacketIds = {
+		[0x1B] = true
+	}
+
+	local function copyPacketData(packet)
+		local data = packet.AsArray
+		local copied = table.create(#data)
+		for i, v in data do
+			copied[i] = v
+		end
+		return copied
+	end
+
+	local function flushBlinkPackets()
+		if #blinkQueued <= 0 then return end
+		local queued = blinkQueued
+		blinkQueued = {}
+		for _, entry in queued do
+			local suc, err = pcall(raknet.send, entry.Packet, entry.Priority, entry.Reliability, entry.OrderingChannel)
+			if not suc then
+				notif('BlinkPlus', 'Failed to flush queued packet: '..tostring(err), 5, 'warning')
+				break
+			end
+		end
+	end
+
+	local function blinkCycleActive()
+		return blinkActiveUntil > tick()
+	end
+
+	local function startBlinkCycle()
+		local now = tick()
+		local delay = BlinkDelay.Value / 1000
+		blinkActiveUntil = now + delay
+		blinkNextCycle = blinkActiveUntil + (BlinkCooldown.Value / 1000)
+		if blinkFlushThread then
+			task.cancel(blinkFlushThread)
+		end
+		blinkFlushThread = task.spawn(function()
+			task.wait(delay)
+			flushBlinkPackets()
+		end)
+	end
+
+	local function stopBlinkHooks()
+		if blinkSendHook then
+			raknet.remove_send_hook(blinkSendHook)
+			blinkSendHook = nil
+		end
+		if blinkReceiveHook and damageBlockSupported then
+			raknet.remove_receive_hook(blinkReceiveHook)
+			blinkReceiveHook = nil
+		end
+		if blinkFlushThread then
+			task.cancel(blinkFlushThread)
+			blinkFlushThread = nil
+		end
+		blinkActiveUntil = 0
+		blinkNextCycle = 0
+		flushBlinkPackets()
+	end
+
+	BlinkPlus = vape.Categories.Raknet:CreateModule({
+		Name = 'BlinkPlus',
+		Function = function(callback)
+			if callback then
+				if not raknetSupported then
+					notif('BlinkPlus', 'RakNet send hooks are unavailable on this executor.', 8, 'warning')
+					BlinkPlus:Toggle()
+					return
+				end
+
+				blinkSendHook = function(packet)
+					if not BlinkPlus.Enabled then return end
+					local now = tick()
+					if now >= blinkNextCycle then
+						startBlinkCycle()
+					end
+					if blinkCycleActive() and movementPacketIds[packet.PacketId] then
+						table.insert(blinkQueued, {
+							Packet = copyPacketData(packet),
+							Priority = packet.Priority,
+							Reliability = packet.Reliability,
+							OrderingChannel = packet.OrderingChannel
+						})
+						packet:Block()
+					end
+				end
+				raknet.add_send_hook(blinkSendHook)
+
+				if damageBlockSupported then
+					blinkReceiveHook = function(packet)
+						if BlinkPlus.Enabled and blinkCycleActive() then
+							packet:Block()
+						end
+					end
+					raknet.add_receive_hook(blinkReceiveHook)
+				else
+					notif('BlinkPlus', 'Receive hooks are unavailable, so the damage-drop phase is disabled.', 8, 'warning')
+				end
+
+				BlinkPlus:Clean(stopBlinkHooks)
+			else
+				stopBlinkHooks()
+			end
+		end,
+		Tooltip = 'A more advanced and better version of blink :3\nWARNING: extremely blatant and very ban risky.\nRequires Potassium RakNet hooks to be enabled in the internal UI.\nUses queued movement packets and flushes them after each blink window.\nIf receive hooks exist, inbound traffic is broadly blocked during the blink window.'
+	})
+	BlinkDelay = BlinkPlus:CreateSlider({
+		Name = 'Blink Delay',
+		Min = 1,
+		Max = 20,
+		Default = 5,
+		Suffix = 'ms'
+	})
+	BlinkCooldown = BlinkPlus:CreateSlider({
+		Name = 'Blink Cooldown',
+		Min = 0,
+		Max = 5000,
+		Default = 500,
+		Suffix = 'ms'
+	})
+end)
+
 run(function()
 	local ChatSpammer
 	local Lines

@@ -6888,6 +6888,11 @@ mainapi:CreateCategory({
 	Size = UDim2.fromOffset(14, 14)
 })
 mainapi:CreateCategory({
+	Name = 'Raknet',
+	Icon = getcustomasset('catrewrite/assets/new/blatanticon.png'),
+	Size = UDim2.fromOffset(14, 14)
+})
+mainapi:CreateCategory({
 	Name = 'Render',
 	Icon = getcustomasset('catrewrite/assets/new/rendericon.png'),
 	Size = UDim2.fromOffset(15, 14)
@@ -7237,15 +7242,16 @@ guipane:CreateButton({
 			GUICategory = 1,
 			CombatCategory = 2,
 			BlatantCategory = 3,
-			RenderCategory = 4,
-			UtilityCategory = 5,
-			WorldCategory = 6,
-			InventoryCategory = 7,
-			MinigamesCategory = 8,
-			KitsCategory = 9,
-			LegitCategory = 10,
-			FriendsCategoryList = 11,
-			ProfilesCategoryList = 12
+			RaknetCategory = 4,
+			RenderCategory = 5,
+			UtilityCategory = 6,
+			WorldCategory = 7,
+			InventoryCategory = 8,
+			MinigamesCategory = 9,
+			KitsCategory = 10,
+			LegitCategory = 11,
+			FriendsCategoryList = 12,
+			ProfilesCategoryList = 13
 		}
 		local categories = {}
 		for _, v in mainapi.Categories do
