@@ -6122,19 +6122,125 @@ run(function()
 	local BlinkPlus
 	local BlinkDelay
 	local BlinkCooldown
-	local blinkSendHook
-	local blinkReceiveHook
-	local blinkQueued = {}
-	local blinkActiveUntil = 0
-	local blinkNextCycle = 0
-	local blinkFlushThread
-	local damageBlockSupported = type(raknet) == 'table' and type(raknet.add_receive_hook) == 'function' and type(raknet.remove_receive_hook) == 'function'
+	local OnlyWhenTargeting
+	local TargetDistance
+	local oldphys, oldsend
+	local targetCheckConnection
+
+	BlinkPlus = vape.Categories.Utility:CreateModule({
+		Name = 'BlinkPlus',
+		Function = function(callback)
+			if callback then
+				local teleported
+				BlinkPlus:Clean(lplr.OnTeleport:Connect(function()
+					setfflag('PhysicsSenderMaxBandwidthBps', '38760')
+					setfflag('DataSenderRate', '60')
+					teleported = true
+				end))
+
+				local function hasTargetInRange()
+					if not OnlyWhenTargeting.Enabled then return true end
+					if not entitylib.isAlive then return false end
+					local rootPos = entitylib.character.RootPart.Position
+					for _, ent in entitylib.List do
+						if ent.Target and ent.RootPart then
+							local dist = (ent.RootPart.Position - rootPos).Magnitude
+							if dist <= TargetDistance.Value then
+								return true
+							end
+						end
+					end
+					return false
+				end
+
+				local lastBlink = 0
+				repeat
+					local now = tick()
+					local physicsrate, senderrate = '0', '60'
+					local shouldBlink = hasTargetInRange()
+
+					if shouldBlink then
+						if now >= lastBlink + (BlinkDelay.Value / 1000) + (BlinkCooldown.Value / 1000) then
+							lastBlink = now
+						end
+						if now < lastBlink + (BlinkDelay.Value / 1000) then
+							physicsrate, senderrate = '38760', '60'
+						end
+					else
+						lastBlink = 0
+						physicsrate, senderrate = '38760', '60'
+					end
+
+					if physicsrate ~= oldphys or senderrate ~= oldsend then
+						setfflag('PhysicsSenderMaxBandwidthBps', physicsrate)
+						setfflag('DataSenderRate', senderrate)
+						oldphys, oldsend = physicsrate, senderrate
+					end
+
+					task.wait(0.03)
+				until (not BlinkPlus.Enabled and not teleported)
+			else
+				if setfflag then
+					setfflag('PhysicsSenderMaxBandwidthBps', '38760')
+					setfflag('DataSenderRate', '60')
+				end
+				oldphys, oldsend = nil, nil
+				if targetCheckConnection then
+					targetCheckConnection:Disconnect()
+					targetCheckConnection = nil
+				end
+			end
+		end,
+		Tooltip = 'Works like normal Blink but with added settings for distance targeting.'
+	})
+	BlinkDelay = BlinkPlus:CreateSlider({
+		Name = 'Blink Delay',
+		Min = 1,
+		Max = 5000,
+		Default = 500,
+		Suffix = 'ms',
+		Tooltip = 'How long to choke packets for'
+	})
+	BlinkCooldown = BlinkPlus:CreateSlider({
+		Name = 'Blink Cooldown',
+		Min = 0,
+		Max = 5000,
+		Default = 500,
+		Suffix = 'ms',
+		Tooltip = 'Delay between blink cycles'
+	})
+	OnlyWhenTargeting = BlinkPlus:CreateToggle({
+		Name = 'Only when targeting',
+		Function = function(callback)
+			TargetDistance.Object.Visible = callback
+		end,
+		Tooltip = 'Only blink when a targeted player is within range'
+	})
+	TargetDistance = BlinkPlus:CreateSlider({
+		Name = 'Target Distance',
+		Min = 1,
+		Max = 100,
+		Default = 20,
+		Suffix = function(val)
+			return val == 1 and 'stud' or 'studs'
+		end,
+		Visible = false,
+		Tooltip = 'Maximum distance to targeted player to trigger blink'
+	})
+end)
+
+run(function()
+	local LagRange
+	local TriggerRange
+	local LagAmount
+	local lagSendHook
+	local lagQueued = {}
+	local lagActive = false
 	local raknetSupported = type(raknet) == 'table'
 		and type(raknet.add_send_hook) == 'function'
 		and type(raknet.remove_send_hook) == 'function'
 		and type(raknet.send) == 'function'
-	-- Potassium's public RakNet docs only expose generic packet fields, so this
-	-- currently keys off timestamp traffic as the safest movement heuristic.
+
 	local movementPacketIds = {
 		[0x1B] = true,
 		[0x85] = true
@@ -6149,116 +6255,103 @@ run(function()
 		return copied
 	end
 
-	local function flushBlinkPackets()
-		if #blinkQueued <= 0 then return end
-		local queued = blinkQueued
-		blinkQueued = {}
+	local function flushLagPackets()
+		if #lagQueued <= 0 then return end
+		local queued = lagQueued
+		lagQueued = {}
 		for _, entry in queued do
-			local suc, err = pcall(raknet.send, entry.Packet, entry.Priority, entry.Reliability, entry.OrderingChannel)
-			if not suc then
-				notif('BlinkPlus', 'Failed to flush queued packet: '..tostring(err), 5, 'warning')
-				break
+			task.delay(entry.Delay, function()
+				local suc, err = pcall(raknet.send, entry.Packet, entry.Priority, entry.Reliability, entry.OrderingChannel)
+				if not suc then
+					notif('LagRange', 'Failed to send delayed packet: '..tostring(err), 5, 'warning')
+				end
+			end)
+		end
+	end
+
+	local function stopLagHooks()
+		if lagSendHook then
+			raknet.remove_send_hook(lagSendHook)
+			lagSendHook = nil
+		end
+		lagActive = false
+		flushLagPackets()
+	end
+
+	local function getNearestEnemyDistance()
+		if not entitylib.isAlive then return math.huge end
+		local rootPos = entitylib.character.RootPart.Position
+		local minDist = math.huge
+		for _, ent in entitylib.List do
+			if ent.Player and ent.RootPart and ent.Player ~= lplr then
+				if not isFriend(ent.Player) then
+					local dist = (ent.RootPart.Position - rootPos).Magnitude
+					if dist < minDist then
+						minDist = dist
+					end
+				end
 			end
 		end
+		return minDist
 	end
 
-	local function blinkCycleActive()
-		return blinkActiveUntil > tick()
-	end
-
-	local function startBlinkCycle()
-		local now = tick()
-		local delay = BlinkDelay.Value / 1000
-		blinkActiveUntil = now + delay
-		blinkNextCycle = blinkActiveUntil + (BlinkCooldown.Value / 1000)
-		if blinkFlushThread then
-			task.cancel(blinkFlushThread)
-		end
-		blinkFlushThread = task.spawn(function()
-			task.wait(delay)
-			flushBlinkPackets()
-		end)
-	end
-
-	local function stopBlinkHooks()
-		if blinkSendHook then
-			raknet.remove_send_hook(blinkSendHook)
-			blinkSendHook = nil
-		end
-		if blinkReceiveHook and damageBlockSupported then
-			raknet.remove_receive_hook(blinkReceiveHook)
-			blinkReceiveHook = nil
-		end
-		if blinkFlushThread then
-			task.cancel(blinkFlushThread)
-			blinkFlushThread = nil
-		end
-		blinkActiveUntil = 0
-		blinkNextCycle = 0
-		flushBlinkPackets()
-	end
-
-	BlinkPlus = vape.Categories.Raknet:CreateModule({
-		Name = 'BlinkPlus',
+	LagRange = vape.Categories.Raknet:CreateModule({
+		Name = 'LagRange',
 		Function = function(callback)
 			if callback then
 				if not raknetSupported then
-					notif('BlinkPlus', 'RakNet send hooks are unavailable on this executor.', 8, 'warning')
-					BlinkPlus:Toggle()
+					notif('LagRange', 'RakNet send hooks are unavailable on this executor.', 8, 'warning')
+					LagRange:Toggle()
 					return
 				end
 
-				blinkSendHook = function(packet)
-					if not BlinkPlus.Enabled then return end
+				lagSendHook = function(packet)
+					if not LagRange.Enabled then return end
 					local isMovementPacket = movementPacketIds[packet.PacketId]
 					if not isMovementPacket then return end
-					local now = tick()
-					if now >= blinkNextCycle then
-						startBlinkCycle()
-					end
-					if blinkCycleActive() then
-						table.insert(blinkQueued, {
+
+					local nearestDist = getNearestEnemyDistance()
+					if nearestDist <= TriggerRange.Value then
+						lagActive = true
+						table.insert(lagQueued, {
 							Packet = copyPacketData(packet),
 							Priority = packet.Priority,
 							Reliability = packet.Reliability,
-							OrderingChannel = packet.OrderingChannel
+							OrderingChannel = packet.OrderingChannel,
+							Delay = LagAmount.Value / 1000
 						})
 						packet:Block()
+					else
+						lagActive = false
+						flushLagPackets()
 					end
 				end
-				raknet.add_send_hook(blinkSendHook)
+				raknet.add_send_hook(lagSendHook)
 
-				if damageBlockSupported then
-					blinkReceiveHook = function(packet)
-						if BlinkPlus.Enabled and blinkCycleActive() then
-							packet:Block()
-						end
-					end
-					raknet.add_receive_hook(blinkReceiveHook)
-				else
-					notif('BlinkPlus', 'Receive hooks are unavailable, so the damage-drop phase is disabled.', 8, 'warning')
-				end
-
-				BlinkPlus:Clean(stopBlinkHooks)
+				LagRange:Clean(stopLagHooks)
 			else
-				stopBlinkHooks()
+				stopLagHooks()
 			end
 		end,
-		Tooltip = 'A more advanced and better version of blink :3\nWARNING: super risky for bans, this is blatant as hell.\nRequires Potassium RakNet hooks to be enabled in the internal UI.\nUses queued movement packets and flushes them after each blink window.\nIf receive hooks exist, inbound traffic is broadly blocked during the blink window.'
+		Tooltip = 'Makes you lag serverside when near enemies so ur hard to hit\nWARNING: Delayed packets are easy for anticheat to flag, high ban risk.'
 	})
-	BlinkDelay = BlinkPlus:CreateSlider({
-		Name = 'Blink Delay',
-		Min = 1,
-		Max = 20,
-		Default = 5,
-		Suffix = 'ms'
+	TriggerRange = LagRange:CreateSlider({
+		Name = 'Trigger Range',
+		Min = 5,
+		Max = 50,
+		Default = 20,
+		Suffix = function(val)
+			return val == 1 and 'stud' or 'studs'
+		end,
+		Tooltip = 'Distance at which enemies trigger the lag effect'
 	})
-	BlinkCooldown = BlinkPlus:CreateSlider({
-		Name = 'Blink Cooldown',
-		Min = 0,
-		Max = 5000,
-		Default = 500,
-		Suffix = 'ms'
+	LagAmount = LagRange:CreateSlider({
+		Name = 'Lag Amount',
+		Min = 50,
+		Max = 500,
+		Default = 200,
+		Suffix = 'ms',
+		Tooltip = 'How much to delay your movement packets'
 	})
 end)
 
